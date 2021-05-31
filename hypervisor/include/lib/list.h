@@ -29,7 +29,7 @@
 #ifndef LIST_H_
 #define LIST_H_
 
-#include <types.h>
+#include <util.h>
 
 struct list_head {
 	struct list_head *next, *prev;
@@ -119,6 +119,9 @@ static inline void list_splice_init(struct list_head *list,
 }
 
 #define container_of(ptr, type, member) \
+	((type *)((char *)(1 ? ptr : &((type *)0)->member)-offsetof(type, member)))
+
+#define container_of_unsafe(ptr, type, member) \
 	((type *)((char *)(ptr)-offsetof(type, member)))
 
 #define list_for_each(pos, head) \
@@ -129,7 +132,7 @@ static inline void list_splice_init(struct list_head *list,
 		(pos) = (n), (n) = (pos)->next)
 
 #define get_first_item(attached, type, member) \
-	((type *)((char *)((attached)->next)-(uint64_t)(&((type *)0)->member)))
+	((type *)((char *)((attached)->next)-offsetof(type, member)))
 
 static inline void
 hlist_del(struct hlist_node *n)
