@@ -12,9 +12,9 @@
 #include <asm/vtd.h>
 #include <asm/per_cpu.h>
 #include <asm/lapic.h>
-#include <asm/guest/assign.h>
 #include <asm/guest/ept.h>
 #include <asm/mmu.h>
+#include <ptdev.h>
 #include <hypercall.h>
 #include <errno.h>
 #include <logmsg.h>
@@ -1130,7 +1130,7 @@ int32_t hcall_vm_intr_monitor(struct acrn_vcpu *vcpu, struct acrn_vm *target_vm,
 			if (intr_hdr->buf_cnt <= (MAX_PTDEV_NUM * 2U)) {
 				switch (intr_hdr->cmd) {
 				case INTR_CMD_GET_DATA:
-					intr_hdr->buf_cnt = ptirq_get_intr_data(target_vm,
+					intr_hdr->buf_cnt = ptdev_get_intr_data(target_vm,
 						intr_hdr->buffer, intr_hdr->buf_cnt);
 					break;
 

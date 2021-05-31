@@ -1047,28 +1047,29 @@ static int32_t shell_show_cpu_int(__unused int32_t argc, __unused char **argv)
 	return 0;
 }
 
-static void get_entry_info(const struct ptirq_remapping_info *entry, char *type,
+static void get_entry_info(const struct ptdev_entry *entry, char *type,
 		uint32_t *irq, uint32_t *vector, uint64_t *dest, bool *lvl_tm,
 		uint32_t *pgsi, uint32_t *vgsi, uint32_t *bdf, uint32_t *vbdf)
 {
 	if (is_entry_active(entry)) {
-		if (entry->intr_type == PTDEV_INTR_MSI) {
+		const struct ptirq_remapping_info *info = remapping_info_of_ptdev_const(entry);
+		if (info->intr_type == PTDEV_INTR_MSI) {
 			(void)strncpy_s(type, 16U, "MSI", 16U);
-			*dest = entry->pmsi.addr.bits.dest_field;
-			if (entry->pmsi.data.bits.trigger_mode == MSI_DATA_TRGRMODE_LEVEL) {
+			*dest = info->pmsi.addr.bits.dest_field;
+			if (info->pmsi.data.bits.trigger_mode == MSI_DATA_TRGRMODE_LEVEL) {
 				*lvl_tm = true;
 			} else {
 				*lvl_tm = false;
 			}
 			*pgsi = INVALID_INTERRUPT_PIN;
 			*vgsi = INVALID_INTERRUPT_PIN;
-			*bdf = entry->phys_sid.msi_id.bdf;
-			*vbdf = entry->virt_sid.msi_id.bdf;
+			*bdf = info->phys_sid.msi_id.bdf;
+			*vbdf = info->virt_sid.msi_id.bdf;
 		} else {
 			uint32_t phys_irq = entry->allocated_pirq;
 			union ioapic_rte rte;
 
-			if (entry->virt_sid.intx_id.ctlr == INTX_CTLR_IOAPIC) {
+			if (info->virt_sid.intx_id.ctlr == INTX_CTLR_IOAPIC) {
 				(void)strncpy_s(type, 16U, "IOAPIC", 16U);
 			} else {
 				(void)strncpy_s(type, 16U, "PIC", 16U);
@@ -1080,8 +1081,8 @@ static void get_entry_info(const struct ptirq_remapping_info *entry, char *type,
 			} else {
 				*lvl_tm = false;
 			}
-			*pgsi = entry->phys_sid.intx_id.gsi;
-			*vgsi = entry->virt_sid.intx_id.gsi;
+			*pgsi = info->phys_sid.intx_id.gsi;
+			*vgsi = info->virt_sid.intx_id.gsi;
 			*bdf = 0U;
 			*vbdf = 0U;
 		}
@@ -1103,7 +1104,7 @@ static void get_entry_info(const struct ptirq_remapping_info *entry, char *type,
 static void get_ptdev_info(char *str_arg, size_t str_max)
 {
 	char *str = str_arg;
-	struct ptirq_remapping_info *entry;
+	struct ptdev_entry *entry;
 	uint16_t idx;
 	size_t len, size = str_max;
 	uint32_t irq, vector;
@@ -1121,7 +1122,7 @@ static void get_ptdev_info(char *str_arg, size_t str_max)
 	str += len;
 
 	for (idx = 0U; idx < CONFIG_MAX_PT_IRQ_ENTRIES; idx++) {
-		entry = &ptirq_entries[idx];
+		entry = &ptdev_entries[idx];
 		if (is_entry_active(entry)) {
 			get_entry_info(entry, type, &irq, &vector, &dest, &lvl_tm, &pgsi, &vgsi,
 					(uint32_t *)&bdf, (uint32_t *)&vbdf);

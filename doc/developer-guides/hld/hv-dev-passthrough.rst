@@ -424,23 +424,23 @@ The following APIs are provided to handle ptdev interrupt:
 .. doxygenfunction:: ptirq_softirq
    :project: Project ACRN
 
-.. doxygenfunction:: ptirq_alloc_entry
+.. doxygenfunction:: ptdev_alloc_entry
    :project: Project ACRN
 
-.. doxygenfunction:: ptirq_release_entry
+.. doxygenfunction:: ptdev_release_entry
    :project: Project ACRN
 
 .. doxygenfunction:: ptdev_release_all_entries
    :project: Project ACRN
 
-.. doxygenfunction:: ptirq_activate_entry
+.. doxygenfunction:: ptdev_activate_entry
    :project: Project ACRN
 
-.. doxygenfunction:: ptirq_deactivate_entry
+.. doxygenfunction:: ptdev_deactivate_entry
    :project: Project ACRN
 
-.. doxygenfunction:: ptirq_dequeue_softirq
+.. doxygenfunction:: ptdev_dequeue_softirq
    :project: Project ACRN
 
-.. doxygenfunction:: ptirq_get_intr_data
+.. doxygenfunction:: ptdev_get_intr_data
    :project: Project ACRN

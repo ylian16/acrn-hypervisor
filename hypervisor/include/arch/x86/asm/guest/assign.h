@@ -8,7 +8,113 @@
 #define ASSIGN_H
 
 #include <types.h>
-#include <ptdev.h>
+#include <list.h>
+
+enum intx_ctlr {
+	INTX_CTLR_IOAPIC	= 0U,
+	INTX_CTLR_PIC
+};
+
+union irte_index {
+	uint16_t index;
+	struct {
+		uint16_t index_low:15;
+		uint16_t index_high:1;
+	} bits __packed;
+};
+
+
+union source_id {
+	uint64_t value;
+	struct {
+		uint16_t bdf;
+		uint16_t entry_nr;
+		uint32_t reserved;
+	} msi_id;
+	/*
+	 * ctlr indicates if the source of interrupt is IO-APIC or PIC
+	 * pin indicates the pin number of interrupt controller determined by ctlr
+	 */
+	struct {
+		enum intx_ctlr ctlr;
+		uint32_t gsi;
+	} intx_id;
+};
+
+/*
+ * Macros for bits in union msi_addr_reg
+ */
+
+#define	MSI_ADDR_BASE			0xfeeUL	/* Base address for MSI messages */
+#define	MSI_ADDR_RH			0x1U	/* Redirection Hint */
+#define	MSI_ADDR_DESTMODE_LOGICAL	0x1U	/* Destination Mode: Logical*/
+#define	MSI_ADDR_DESTMODE_PHYS		0x0U	/* Destination Mode: Physical*/
+
+union msi_addr_reg {
+	uint64_t full;
+	struct {
+		uint32_t rsvd_1:2;
+		uint32_t dest_mode:1;
+		uint32_t rh:1;
+		uint32_t rsvd_2:8;
+		uint32_t dest_field:8;
+		uint32_t addr_base:12;
+		uint32_t hi_32;
+	} bits __packed;
+	struct {
+		uint32_t rsvd_1:2;
+		uint32_t intr_index_high:1;
+		uint32_t shv:1;
+		uint32_t intr_format:1;
+		uint32_t intr_index_low:15;
+		uint32_t constant:12;
+		uint32_t hi_32;
+	} ir_bits __packed;
+
+};
+
+/*
+ * Macros for bits in union msi_data_reg
+ */
+
+#define MSI_DATA_DELMODE_FIXED		0x0U	/* Delivery Mode: Fixed */
+#define MSI_DATA_DELMODE_LOPRI		0x1U	/* Delivery Mode: Low Priority */
+#define MSI_DATA_TRGRMODE_EDGE		0x0U	/* Trigger Mode: Edge */
+#define MSI_DATA_TRGRMODE_LEVEL		0x1U	/* Trigger Mode: Level */
+
+union msi_data_reg {
+	uint32_t full;
+	struct {
+		uint32_t vector:8;
+		uint32_t delivery_mode:3;
+		uint32_t rsvd_1:3;
+		uint32_t level:1;
+		uint32_t trigger_mode:1;
+		uint32_t rsvd_2:16;
+	} bits __packed;
+};
+
+struct msi_info {
+	union msi_addr_reg addr;
+	union msi_data_reg data;
+};
+
+struct ptirq_remapping_info {
+	uint32_t intr_type;
+	union source_id phys_sid;
+	union source_id virt_sid;
+	uint32_t polarity; /* 0=active high, 1=active low*/
+	struct msi_info vmsi;
+	struct msi_info pmsi;
+	uint16_t irte_idx;
+
+	struct hlist_node phys_link;
+	struct hlist_node virt_link;
+
+	void (*release_cb)(const struct ptirq_remapping_info *);
+};
+
+struct acrn_vm;
 
 /**
  * @file assign.h
@@ -158,5 +264,11 @@ void ptirq_remove_configured_intx_remappings(const struct acrn_vm *vm);
 /**
   * @}
   */
+
+/* Interface to ptdev */
+void initialize_ptirq_remapping_info(struct ptirq_remapping_info *info, uint32_t intr_type);
+void ptirq_release_remapping_info(struct ptirq_remapping_info *info);
+void ptirq_activate_remapping_info(struct ptirq_remapping_info *info);
+void ptirq_deactivate_remapping_info(struct ptirq_remapping_info *info);
 
 #endif /* ASSIGN_H */
