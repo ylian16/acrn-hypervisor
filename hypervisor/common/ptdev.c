@@ -177,10 +177,43 @@ void ptdev_deactivate_entry(struct ptdev_entry *entry)
 	free_irq(entry->allocated_pirq);
 }
 
+/**
+ * @brief Handler of softirq for passthrough device.
+ *
+ * When hypervisor receive a physical interrupt from passthrough device, it
+ * will enqueue a ptirq entry and raise softirq SOFTIRQ_PTDEV. This function
+ * is the handler of the softirq, it handles the interrupt and injects the
+ * virtual into VM.
+ * The handler is registered by calling @ref ptdev_init during hypervisor
+ * initialization.
+ *
+ * @param[in]    pcpu_id physical cpu id of the soft irq
+ *
+ */
+static void ptdev_softirq(uint16_t pcpu_id)
+{
+	while (1) {
+		struct ptdev_entry *ptdev = ptdev_dequeue_softirq(pcpu_id);
+
+		if (ptdev == NULL) {
+			break;
+		}
+
+		/* skip any inactive entry */
+		if (!is_entry_active(ptdev)) {
+			/* service next item */
+			continue;
+		}
+
+		/* handle real request */
+		ptirq_handle_irq(ptdev->vm, remapping_info_of_ptdev_const(ptdev));
+	}
+}
+
 void ptdev_init(void)
 {
 	if (get_pcpu_id() == BSP_CPU_ID) {
-		register_softirq(SOFTIRQ_PTDEV, ptirq_softirq);
+		register_softirq(SOFTIRQ_PTDEV, ptdev_softirq);
 	}
 	INIT_LIST_HEAD(&get_cpu_var(softirq_dev_entry_list));
 }

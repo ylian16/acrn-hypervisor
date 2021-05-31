@@ -79,21 +79,6 @@ extern spinlock_t ptdev_lock;
  * @addtogroup acrn_passthrough
  * @{
  */
-
-/**
- * @brief Handler of softirq for passthrough device.
- *
- * When hypervisor receive a physical interrupt from passthrough device, it
- * will enqueue a ptirq entry and raise softirq SOFTIRQ_PTDEV. This function
- * is the handler of the softirq, it handles the interrupt and injects the
- * virtual into VM.
- * The handler is registered by calling @ref ptdev_init during hypervisor
- * initialization.
- *
- * @param[in]    pcpu_id physical cpu id of the soft irq
- *
- */
-void ptirq_softirq(uint16_t pcpu_id);
 /**
  * @brief Passthrough device global data structure initialization.
  *

@@ -572,39 +572,13 @@ static void ptirq_handle_intx(struct acrn_vm *vm, const struct ptirq_remapping_i
 	}
 }
 
-void ptirq_softirq(uint16_t pcpu_id)
+void ptirq_handle_irq(struct acrn_vm *vm, const struct ptirq_remapping_info *info)
 {
-	while (1) {
-		struct ptdev_entry *ptdev = ptdev_dequeue_softirq(pcpu_id);
-		const struct ptirq_remapping_info *entry;
-
-		if (ptdev == NULL) {
-			break;
-		}
-
-		/* skip any inactive entry */
-		if (!is_entry_active(ptdev)) {
-			/* service next item */
-			continue;
-		}
-
-		entry = remapping_info_of_ptdev_const(ptdev);
-
-		/* handle real request */
-		if (entry->intr_type == PTDEV_INTR_INTX) {
-			ptirq_handle_intx(ptdev->vm, entry);
-		} else {
-			const struct msi_info *vmsi = &entry->vmsi;
-			if (vmsi != NULL) {
-				/* TODO: vmsi destmode check required */
-				(void)vlapic_inject_msi(ptdev->vm, vmsi->addr.full, vmsi->data.full);
-				dev_dbg(DBG_LEVEL_PTIRQ, "dev-assign: irq=0x%x MSI VR: 0x%x-0x%x",
-					ptdev->allocated_pirq, vmsi->data.bits.vector,
-					irq_to_vector(ptdev->allocated_pirq));
-				dev_dbg(DBG_LEVEL_PTIRQ, " vmsi_addr: 0x%lx vmsi_data: 0x%x",
-					vmsi->addr.full, vmsi->data.full);
-			}
-		}
+	if (info->intr_type == PTDEV_INTR_INTX) {
+		ptirq_handle_intx(vm, info);
+	} else {
+		/* TODO: vmsi destmode check required */
+		(void)vlapic_inject_msi(vm, info->vmsi.addr.full, info->vmsi.data.full);
 	}
 }
 

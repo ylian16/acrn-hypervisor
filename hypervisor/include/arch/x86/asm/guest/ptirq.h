@@ -266,9 +266,11 @@ void ptirq_remove_configured_intx_remappings(const struct acrn_vm *vm);
   */
 
 /* Interface to ptdev */
+void ptirq_handle_irq(struct acrn_vm *vm, const struct ptirq_remapping_info *info);
 void initialize_ptirq_remapping_info(struct ptirq_remapping_info *info, uint32_t intr_type);
 void ptirq_release_remapping_info(struct ptirq_remapping_info *info);
 void ptirq_activate_remapping_info(struct ptirq_remapping_info *info);
 void ptirq_deactivate_remapping_info(struct ptirq_remapping_info *info);
+
 
 #endif /* ASSIGN_H */
