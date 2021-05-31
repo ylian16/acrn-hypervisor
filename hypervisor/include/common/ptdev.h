@@ -10,7 +10,7 @@
 #include <list.h>
 #include <asm/lib/spinlock.h>
 #include <timer.h>
-#include <asm/guest/assign.h>
+#include <asm/guest/ptirq.h>
 
 #define PTDEV_INTR_MSI		(1U << 0U)
 #define PTDEV_INTR_INTX		(1U << 1U)

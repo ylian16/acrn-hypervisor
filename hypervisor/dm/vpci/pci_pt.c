@@ -29,7 +29,7 @@
 #include <asm/guest/vm.h>
 #include <errno.h>
 #include <ptdev.h>
-#include <asm/guest/assign.h>
+#include <asm/guest/ptirq.h>
 #include <asm/vtd.h>
 #include <asm/guest/ept.h>
 #include <asm/mmu.h>

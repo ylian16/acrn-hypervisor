@@ -40,7 +40,7 @@
 #include <errno.h>
 #include <asm/guest/vm.h>
 #include <asm/guest/ept.h>
-#include <asm/guest/assign.h>
+#include <asm/guest/ptirq.h>
 #include <asm/io.h>
 #include <asm/mmu.h>
 

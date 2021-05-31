@@ -34,7 +34,6 @@
 #include <asm/platform_caps.h>
 #include <mmio_dev.h>
 #include <asm/trampoline.h>
-#include <asm/guest/assign.h>
 #include <vgpio.h>
 #include <asm/rtcm.h>
 #include <asm/irq.h>

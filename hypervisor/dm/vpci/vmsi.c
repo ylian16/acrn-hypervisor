@@ -28,8 +28,7 @@
  */
 
 #include <asm/guest/vm.h>
-#include <ptdev.h>
-#include <asm/guest/assign.h>
+#include <asm/guest/ptirq.h>
 #include <vpci.h>
 #include <asm/vtd.h>
 #include "vpci_priv.h"

@@ -30,7 +30,7 @@
 #include <asm/guest/vm.h>
 #include <asm/guest/virq.h>
 #include <irq.h>
-#include <asm/guest/assign.h>
+#include <asm/guest/ptirq.h>
 #include <asm/lib/spinlock.h>
 #include <logmsg.h>
 #include <asm/ioapic.h>
