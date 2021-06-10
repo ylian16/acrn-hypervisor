@@ -43,15 +43,16 @@
 union lapic_base_msr {
 	uint64_t value;
 	struct {
-		uint32_t rsvd_1:8;
-		uint32_t bsp:1;
-		uint32_t rsvd_2:1;
-		uint32_t x2APIC_enable:1;
-		uint32_t xAPIC_enable:1;
-		uint32_t lapic_paddr:24;
-		uint32_t rsvd_3:28;
+		uint64_t rsvd_1:8;
+		uint64_t bsp:1;
+		uint64_t rsvd_2:1;
+		uint64_t x2APIC_enable:1;
+		uint64_t xAPIC_enable:1;
+		uint64_t lapic_paddr:24;
+		uint64_t rsvd_3:28;
 	} fields;
 };
+_Static_assert(sizeof(union lapic_base_msr) == sizeof(uint64_t), "");
 
 static struct lapic_regs saved_lapic_regs;
 static union lapic_base_msr saved_lapic_base_msr;
