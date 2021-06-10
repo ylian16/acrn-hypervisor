@@ -357,14 +357,13 @@ MODULES += $(VP_DM_MOD)
 MODULES += $(VP_TRUSTY_MOD)
 MODULES += $(VP_HCALL_MOD)
 ifeq ($(CONFIG_RELEASE),y)
-MODULES += $(LIB_RELEASE)
 LIB_BUILD = $(LIB_RELEASE)
-LIB_MK = release/Makefile
+LIB_BUILD_MK = release/Makefile
 else
-MODULES += $(LIB_DEBUG)
 LIB_BUILD = $(LIB_DEBUG)
-LIB_MK = debug/Makefile
+LIB_BUILD_MK = debug/Makefile
 endif
+MODULES += $(LIB_BUILD)
 MODULES += $(SYS_INIT_MOD)
 
 DISTCLEAN_OBJS := $(shell find $(BASEDIR) -name '*.o')
@@ -394,8 +393,7 @@ pre_build: $(HV_CONFIG_H) $(HV_CONFIG_TIMESTAMP)
 	@echo "generate the binary of ACPI tables for pre-launched VMs ..."
 	python3 ../misc/config_tools/acpi_gen/bin_gen.py --board $(BOARD) --scenario $(SCENARIO) --asl $(HV_CONFIG_DIR) --out $(HV_OBJDIR)/acpi
 
-.PHONY: header
-header: $(VERSION) $(HV_CONFIG_H) $(HV_CONFIG_TIMESTAMP)
+header:=$(VERSION) $(HV_CONFIG_H) $(HV_CONFIG_TIMESTAMP)
 
 .PHONY: lib-mod boot-mod hw-mod vp-base-mod vp-dm-mod vp-trusty-mod vp-hcall-mod sys-init-mod
 $(LIB_MOD): $(LIB_C_OBJS) $(LIB_S_OBJS)
@@ -438,12 +436,11 @@ $(SYS_INIT_MOD): $(SYS_INIT_C_OBJS)
 
 sys-init-mod: $(SYS_INIT_MOD)
 
-.PHONY: lib
+.PHONY: lib_build
 
-$(LIB_BUILD): header
-	$(MAKE) -f $(LIB_MK) MKFL_NAME=$(LIB_MK)
-
-lib: $(LIB_BUILD)
+$(LIB_BUILD): $(header) lib_build
+lib_build:
+	$(MAKE) -f $(LIB_BUILD_MK) MKFL_NAME=$(LIB_BUILD_MK)
 
 $(HV_OBJDIR)/$(HV_FILE).32.out: $(HV_OBJDIR)/$(HV_FILE).out
 	$(OBJCOPY) -S --section-alignment=0x1000 -O elf32-i386 $< $@
@@ -452,10 +449,11 @@ $(HV_OBJDIR)/$(HV_FILE).bin: $(HV_OBJDIR)/$(HV_FILE).out
 	$(OBJCOPY) -O binary $< $(HV_OBJDIR)/$(HV_FILE).bin
 	rm -f $(UPDATE_RESULT)
 
+$(HV_OBJDIR)/$(HV_FILE).out: lib_build
 $(HV_OBJDIR)/$(HV_FILE).out: $(MODULES)
 	${BASH} ${LD_IN_TOOL} $(ARCH_LDSCRIPT_IN) $(ARCH_LDSCRIPT) ${HV_CONFIG_MK}
 	$(CC) -Wl,-Map=$(HV_OBJDIR)/$(HV_FILE).map -o $@ $(LDFLAGS) $(ARCH_LDFLAGS) -T$(ARCH_LDSCRIPT) \
-		-Wl,--start-group $^ -Wl,--end-group
+		-Wl,--start-group $(MODULES) -Wl,--end-group
 
 .PHONY: clean
 clean:
@@ -510,16 +508,16 @@ $(VERSION): $(HV_CONFIG_H)
 -include $(C_OBJS:.o=.d)
 -include $(S_OBJS:.o=.d)
 
-$(HV_OBJDIR)/%.o: %.c header
+$(HV_OBJDIR)/%.o: %.c $(header)
 	[ ! -e $@ ] && mkdir -p $(dir $@) && mkdir -p $(HV_MODDIR); \
 	$(CC) $(patsubst %, -I%, $(INCLUDE_PATH)) -I. -c $(CFLAGS) $(ARCH_CFLAGS) $< -o $@ -MMD -MT $@
 
 $(VM_CFG_C_SRCS): %.c: $(HV_CONFIG_TIMESTAMP)
 
-$(VM_CFG_C_OBJS): %.o: %.c header
+$(VM_CFG_C_OBJS): %.o: %.c $(header)
 	[ ! -e $@ ] && mkdir -p $(dir $@) && mkdir -p $(HV_MODDIR); \
 	$(CC) $(patsubst %, -I%, $(INCLUDE_PATH)) -I. -c $(CFLAGS) $(ARCH_CFLAGS) $< -o $@ -MMD -MT $@
 
-$(HV_OBJDIR)/%.o: %.S header
+$(HV_OBJDIR)/%.o: %.S $(header)
 	[ ! -e $@ ] && mkdir -p $(dir $@) && mkdir -p $(HV_MODDIR); \
 	$(CC) $(patsubst %, -I%, $(INCLUDE_PATH)) -I. $(ASFLAGS) $(ARCH_ASFLAGS) -c $< -o $@ -MMD -MT $@
