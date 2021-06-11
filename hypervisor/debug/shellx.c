@@ -210,7 +210,6 @@ int32_t shell_vlapic_info(int32_t argc, char **argv)
  */
 
 #define PGTABLE_BASE_HPA(v) (hpa2hva(BITS((v), 51, 12) << 12))
-#define PGTABLE_BASE_GPA(v) (gpa2hva(vm, BITS((v), 51, 12) << 12))
 
 /* Human readable size */
 typedef struct hr_size {
@@ -356,26 +355,26 @@ _Static_assert(sizeof(pte_t) == sizeof(uint64_t), "");
 
 static bool is_valid_pml4e(pml4e_t *pml4e)
 {
-	return pml4e->s.p && pml4e->s.reserved == 0;
+	return pml4e && pml4e->s.p && pml4e->s.reserved == 0;
 }
 
 static bool is_valid_pdpte(pdpte_t *pdpte)
 {
-	return (pdpte->p.p
+	return (pdpte && pdpte->p.p
 		&& ((pdpte->p.ps == 0)
 		    || (pdpte->m.reserved == 0)));
 }
 
 static bool is_valid_pdte(pdte_t *pdte)
 {
-	return (pdte->p.p
+	return (pdte && pdte->p.p
 		&& ((pdte->p.ps == 0)
 		    || (pdte->m.reserved == 0)));
 }
 
 static bool is_valid_pte(pte_t *pte)
 {
-	return (pte->s.p != 0);
+	return (pte && pte->s.p != 0);
 }
 
 /* SDM 4.5
@@ -770,4 +769,159 @@ int32_t shell_dump_ept(int32_t argc, char **argv)
 	}
 
 	return -EINVAL;
+}
+
+/*
+ * "show-guest-mmap" command
+ */
+
+#define PGTABLE_BASE_GPA(v) (gpa2hva(vm, BITS((v), 51, 12) << 12))
+
+static void
+walk_vm_pgtable(struct acrn_vcpu *vcpu, uint64_t root,
+		void (*fn)(void *data, int shift, uint64_t entry, uint64_t base),
+		void *fn_data)
+{
+	struct acrn_vm *vm = vcpu->vm;
+	pml4e_t *pml4e = PGTABLE_BASE_GPA(root);
+
+	stac();
+	for (uint64_t i = 0; i < 512; i++, pml4e++) {
+		if (!is_valid_pml4e(pml4e))
+			continue;
+
+		(*fn)(fn_data, 39, pml4e->v, i << 39);
+
+		/* descendent to PDPT */
+		pdpte_t *pdpte = PGTABLE_BASE_GPA(pml4e->v);
+		for (uint64_t j = 0; j < 512; j++, pdpte++) {
+			if (!is_valid_pdpte(pdpte))
+				continue;
+
+			(*fn)(fn_data, 30, pdpte->v, i << 39 | j << 30);
+
+			if (pdpte->p.ps)
+				continue;
+
+			/* descendent to PDT */
+			pdte_t *pdte = PGTABLE_BASE_GPA(pdpte->v);
+			for (uint64_t k = 0; k < 512; k++, pdte++) {
+				if (!is_valid_pdte(pdte))
+					continue;
+
+				(*fn)(fn_data, 21, pdte->v,
+				      i << 39 | j << 30 | k << 21);
+
+				if (pdte->p.ps)
+					continue;
+
+				/* descendent to PT */
+				pte_t *pte = PGTABLE_BASE_GPA(pdte->v);
+				for (uint64_t m = 0; m < 512; m++, pte++) {
+					if (is_valid_pte(pte))
+						(*fn)(fn_data, 12, pte->v,
+						      i << 39 | j << 30
+						      | k << 21 | m << 12);
+				}
+			}
+		}
+	}
+	clac();
+}
+
+static l4_pgtable_info_t scan_vm_pgtable(struct acrn_vcpu *vcpu, uint64_t gpa, mmap_fn_t fn)
+{
+	l4_pgtable_walk_data_t data = {
+		.mmap_fn = fn
+	};
+
+	walk_vm_pgtable(vcpu, gpa, l4_pgtable_walk_fn, &data);
+	if (data.last.size && fn)
+		fn(&data.last);
+
+	return l4_pgtable_info_from_data(&data);
+}
+
+static bool local_show_guest_mmap(struct acrn_vm *vm, struct acrn_vcpu *vcpu, char *buf, size_t bufsize)
+{
+	if (get_vcpu_mode(vcpu) == CPU_MODE_64BIT) {
+		uint64_t cr3 = exec_vmread(VMX_GUEST_CR3);
+		l4_pgtable_info_t info = scan_vm_pgtable(vcpu, cr3, dump_mmap1);
+
+		dump_l4_pgtable_info(&info, PGTABLE_BASE_GPA(cr3), buf, bufsize);
+		return true;
+	}
+
+	return false;
+}
+
+struct smpcall_show_guest_mmap_params {
+	struct acrn_vm *vm;
+	struct acrn_vcpu *vcpu;
+	char *buf;
+	size_t bufsize;
+	bool ret;
+};
+
+__unused static void smpcall_show_guest_mmap(void *params)
+{
+	struct smpcall_show_guest_mmap_params *p = params;
+
+	p->ret = local_show_guest_mmap(p->vm, p->vcpu, p->buf, p->bufsize);
+}
+
+static bool show_guest_mmap(struct acrn_vm *vm, struct acrn_vcpu *vcpu, char *buf, size_t bufsize)
+{
+	uint16_t pcpu_id = pcpuid_from_vcpu(vcpu);
+
+	if (pcpu_id == get_pcpu_id()) {
+		return local_show_guest_mmap(vm, vcpu, buf, bufsize);
+	} else {
+		uint64_t mask = 0UL;
+		struct smpcall_show_guest_mmap_params params = {
+			.vm = vm,
+			.vcpu = vcpu,
+			.buf = buf,
+			.bufsize = bufsize,
+			.ret = false
+		};
+		bitmap_set_nolock(pcpu_id, &mask);
+		smp_call_function(mask, smpcall_show_guest_mmap, &params);
+		return params.ret;
+	}
+}
+
+int32_t shell_show_guest_mmap(int32_t argc, char **argv)
+{
+	uint16_t vmid;
+	uint16_t vcpuid;
+
+	if (argc != 3) {
+		shell_puts("Usage: show-guest-mmap <vm_id> <vcpu_id>\r\n");
+		return -EINVAL;
+	}
+
+	vmid = (uint16_t)strtol_deci(argv[1]);
+	vcpuid = (uint16_t)strtol_deci(argv[2]);
+
+	if (vmid >= CONFIG_MAX_VM_NUM) {
+		return -EINVAL;
+	} else {
+		struct acrn_vm *vm = get_vm_from_vmid(vmid);
+
+		if (!is_poweroff_vm(vm)) {
+			uint16_t idx;
+			struct acrn_vcpu *vcpu;
+
+			foreach_vcpu(idx, vm, vcpu) {
+				if (vcpu->vcpu_id == vcpuid) {
+					if (show_guest_mmap(vm, vcpu, shell_log_buf, SHELL_LOG_BUF_SIZE)) {
+						shell_puts(shell_log_buf);
+					}
+				}
+			}
+		}
+	}
+
+	return 0;
 }

@@ -56,6 +56,7 @@ extern int32_t shell_lapic_info(int32_t argc, char **argv);
 extern int32_t shell_vlapic_info(int32_t argc, char **argv);
 extern int32_t shell_memory_map(int32_t argc, char **argv);
 extern int32_t shell_dump_ept(int32_t argc, char **argv);
+extern int32_t shell_show_guest_mmap(int32_t argc, char **argv);
 
 static struct shell_cmd shell_cmds[] = {
 	{
@@ -183,6 +184,12 @@ static struct shell_cmd shell_cmds[] = {
 		.cmd_param	= SHELL_CMD_EPT_PARAM,
 		.help_str	= SHELL_CMD_EPT_HELP,
 		.fcn		= shell_dump_ept,
+	},
+	{
+		.str		= SHELL_CMD_GUEST_MMAP,
+		.cmd_param	= SHELL_CMD_GUEST_MMAP_PARAM,
+		.help_str	= SHELL_CMD_GUEST_MMAP_HELP,
+		.fcn		= shell_show_guest_mmap,
 	},
 };
 

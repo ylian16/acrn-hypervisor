@@ -120,7 +120,11 @@ struct shell {
 #define SHELL_CMD_MEMMAP_HELP		"Dump memory map and paging information of hypervisor"
 
 #define SHELL_CMD_EPT			"dump-ept"
-#define SHELL_CMD_EPT_PARAM		NULL
+#define SHELL_CMD_EPT_PARAM		"<vm id>"
 #define SHELL_CMD_EPT_HELP		"Dump EPT information of a VM"
+
+#define SHELL_CMD_GUEST_MMAP		"show-guest-mmap"
+#define SHELL_CMD_GUEST_MMAP_PARAM	"<vm_id> <vcpu_id>"
+#define SHELL_CMD_GUEST_MMAP_HELP	"Show memory map of a VCPU"
 
 #endif /* SHELL_PRIV_H */
