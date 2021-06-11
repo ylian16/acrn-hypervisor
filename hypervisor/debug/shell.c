@@ -28,7 +28,7 @@
 #define SHELL_PROMPT_STR	"ACRN:\\>"
 
 #define SHELL_LOG_BUF_SIZE		(PAGE_SIZE * MAX_PCPU_NUM / 2U)
-static char shell_log_buf[SHELL_LOG_BUF_SIZE];
+char shell_log_buf[SHELL_LOG_BUF_SIZE];
 
 /* Input Line Other - Switch to the "other" input line (there are only two
  * input lines total).
@@ -52,6 +52,8 @@ static int32_t shell_cpuid(int32_t argc, char **argv);
 static int32_t shell_reboot(int32_t argc, char **argv);
 static int32_t shell_rdmsr(int32_t argc, char **argv);
 static int32_t shell_wrmsr(int32_t argc, char **argv);
+extern int32_t shell_lapic_info(int32_t argc, char **argv);
+extern int32_t shell_vlapic_info(int32_t argc, char **argv);
 
 static struct shell_cmd shell_cmds[] = {
 	{
@@ -156,6 +158,18 @@ static struct shell_cmd shell_cmds[] = {
 		.help_str	= SHELL_CMD_WRMSR_HELP,
 		.fcn		= shell_wrmsr,
 	},
+	{
+		.str		= SHELL_CMD_LAPIC,
+		.cmd_param	= SHELL_CMD_LAPIC_PARAM,
+		.help_str	= SHELL_CMD_LAPIC_HELP,
+		.fcn		= shell_lapic_info,
+	},
+	{
+		.str		= SHELL_CMD_VLAPIC,
+		.cmd_param	= SHELL_CMD_VLAPIC_PARAM,
+		.help_str	= SHELL_CMD_VLAPIC_HELP,
+		.fcn		= shell_vlapic_info,
+	},
 };
 
 /* The initial log level*/
@@ -248,7 +262,7 @@ static char shell_getc(void)
 	return console_getc();
 }
 
-static void shell_puts(const char *string_ptr)
+void shell_puts(const char *string_ptr)
 {
 	/* Output the string */
 	(void)console_write(string_ptr, strnlen_s(string_ptr,
