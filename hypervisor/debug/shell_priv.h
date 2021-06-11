@@ -119,4 +119,8 @@ struct shell {
 #define SHELL_CMD_MEMMAP_PARAM		NULL
 #define SHELL_CMD_MEMMAP_HELP		"Dump memory map and paging information of hypervisor"
 
+#define SHELL_CMD_EPT			"dump-ept"
+#define SHELL_CMD_EPT_PARAM		NULL
+#define SHELL_CMD_EPT_HELP		"Dump EPT information of a VM"
+
 #endif /* SHELL_PRIV_H */

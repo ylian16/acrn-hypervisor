@@ -55,6 +55,7 @@ static int32_t shell_wrmsr(int32_t argc, char **argv);
 extern int32_t shell_lapic_info(int32_t argc, char **argv);
 extern int32_t shell_vlapic_info(int32_t argc, char **argv);
 extern int32_t shell_memory_map(int32_t argc, char **argv);
+extern int32_t shell_dump_ept(int32_t argc, char **argv);
 
 static struct shell_cmd shell_cmds[] = {
 	{
@@ -176,6 +177,12 @@ static struct shell_cmd shell_cmds[] = {
 		.cmd_param	= SHELL_CMD_MEMMAP_PARAM,
 		.help_str	= SHELL_CMD_MEMMAP_HELP,
 		.fcn		= shell_memory_map,
+	},
+	{
+		.str		= SHELL_CMD_EPT,
+		.cmd_param	= SHELL_CMD_EPT_PARAM,
+		.help_str	= SHELL_CMD_EPT_HELP,
+		.fcn		= shell_dump_ept,
 	},
 };
 

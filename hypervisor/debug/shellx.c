@@ -15,6 +15,7 @@
 #include <asm/msr.h>
 #include <asm/vm_config.h>
 #include <asm/guest/vm.h>
+#include <asm/guest/ept.h>
 
 #define SHELL_LOG_BUF_SIZE (4096U * MAX_PCPU_NUM / 2U)
 extern char shell_log_buf[];
@@ -183,7 +184,7 @@ int32_t shell_vlapic_info(int32_t argc, char **argv)
 	vmid = (uint16_t)strtol_deci(argv[1]);
 	vcpuid = (uint16_t)strtol_deci(argv[2]);
 
-	if (vmid < CONFIG_MAX_VM_NUM) {
+	if (vmid >= CONFIG_MAX_VM_NUM) {
 		return -EINVAL;
 	} else {
 		struct acrn_vm *vm = get_vm_from_vmid(vmid);
@@ -585,16 +586,8 @@ static l4_pgtable_info_t scan_l4_pgtable(pml4e_t *base, mmap_fn_t fn)
 	return l4_pgtable_info_from_data(&data);
 }
 
-static void dump_hv_memory_map(char *buf, size_t bufsize)
+static void dump_l4_pgtable_info(const l4_pgtable_info_t *info, void *root, char *buf, size_t bufsize)
 {
-	uint64_t cr3;
-	pml4e_t *base;
-	l4_pgtable_info_t info;
-	
- 	CPU_CR_READ(cr3, &cr3);
-	base = PGTABLE_BASE_HPA(cr3);
-
-	info = scan_l4_pgtable(base, dump_mmap1);
 	snprintf(buf, bufsize,
 		 "%16s : 0x%016lx\n"
 		 "%16s : %d\n"
@@ -604,14 +597,27 @@ static void dump_hv_memory_map(char *buf, size_t bufsize)
 		 "%16s : %d\n"
 		 "%16s : %d\n"
 		 "%16s : %d\n",
-		 "Root pointer", (uint64_t)base,
-		 "PML4 pages", info.pml4_pages,
-		 "PDPT pages", info.pdpt_pages,
-		 "PDT pages", info.pdt_pages,
-		 "PT pages", info.pt_pages,
-		 "1G pages", info.mem_1g_pages,
-		 "2M pages", info.mem_2m_pages,
-		 "4K pages", info.mem_4k_pages);
+		 "Root pointer", (uint64_t)root,
+		 "PML4 pages", info->pml4_pages,
+		 "PDPT pages", info->pdpt_pages,
+		 "PDT pages", info->pdt_pages,
+		 "PT pages", info->pt_pages,
+		 "1G pages", info->mem_1g_pages,
+		 "2M pages", info->mem_2m_pages,
+		 "4K pages", info->mem_4k_pages);
+}
+
+static void dump_hv_memory_map(char *buf, size_t bufsize)
+{
+	uint64_t cr3;
+	pml4e_t *base;
+	l4_pgtable_info_t info;
+
+ 	CPU_CR_READ(cr3, &cr3);
+	base = PGTABLE_BASE_HPA(cr3);
+
+	info = scan_l4_pgtable(base, dump_mmap1);
+	dump_l4_pgtable_info(&info, base, buf, bufsize);
 }
 
 int32_t shell_memory_map(int32_t argc, __unused char **argv)
@@ -625,3 +631,143 @@ int32_t shell_memory_map(int32_t argc, __unused char **argv)
 	}
 }
 
+
+/*
+ * "dump-ept" command
+ */
+
+static bool is_valid_ept_entry(unsigned int shift, uint64_t ent)
+{
+	if (BITS(ent, 2, 0) == 0)
+		return false;
+
+	if (shift == 12) {
+		return true;
+	} else if (shift == 21) {
+		return ((ent & BIT(7)) == 0) ? BITS(ent, 7, 3) == 0
+			: BITS(ent, 20, 12) == 0;
+	} else if (shift == 30) {
+		return ((ent & BIT(7)) == 0) ? BITS(ent, 7, 3) == 0
+			: BITS(ent, 29, 12) == 0;
+	} else if (shift == 39)
+		return BITS(ent, 7, 3) == 0;
+
+	ASSERT(0);
+	return false;
+}
+
+static void walk_ept_pgtable(uint64_t *pml4,
+			     void (*fn)(void *data, int shift, uint64_t entry, uint64_t base),
+			     void *fn_data)
+{
+	for (uint64_t i = 0; i < 512; i++) {
+		uint64_t pml4e = *(pml4 + i);
+		if (!is_valid_ept_entry(39, pml4e))
+			continue;
+
+		(*fn)(fn_data, 39, pml4e, i << 39);
+
+		/* descendent to PDPT */
+		uint64_t *pdpt = PGTABLE_BASE_HPA(pml4e);
+		for (uint64_t j = 0; j < 512; j++) {
+			uint64_t pdpte = *(pdpt + j);
+			if (!is_valid_ept_entry(30, pdpte))
+				continue;
+
+			(*fn)(fn_data, 30, pdpte, i << 39 | j << 30);
+
+			if ((pdpte & BIT(7)) != 0)
+				continue;
+
+			/* descendent to PDT */
+			uint64_t *pdt = PGTABLE_BASE_HPA(pdpte);
+			for (uint64_t k = 0; k < 512; k++) {
+				uint64_t pdte = *(pdt + k);
+				if (!is_valid_ept_entry(21, pdte))
+					continue;
+
+				(*fn)(fn_data, 21, pdte,
+				      i << 39 | j << 30 | k << 21);
+
+				if ((pdte & BIT(7)) != 0)
+					continue;
+
+				/* descendent to PT */
+				uint64_t *pt = PGTABLE_BASE_HPA(pdte);
+				for (uint64_t m = 0; m < 512; m++) {
+					uint64_t pte = *(pt + m);
+					if (is_valid_ept_entry(12, pte))
+						(*fn)(fn_data, 12, pte,
+						      i << 39 | j << 30
+						      | k << 21 | m << 12);
+				}
+			}
+		}
+	}
+}
+
+static l4_pgtable_info_t scan_ept_pgtable(uint64_t *pml4e, mmap_fn_t fn)
+{
+	l4_pgtable_walk_data_t data = {
+		.mmap_fn = fn
+	};
+
+	walk_ept_pgtable(pml4e, l4_pgtable_walk_fn, &data);
+	if (data.last.size && fn)
+		fn(&data.last);
+
+	return l4_pgtable_info_from_data(&data);
+}
+
+static void dump_ept_mmap1(mmap_t *mmap)
+{
+	ASSERT(mmap->size != 0);
+
+	hr_size_t sz = hr_size(mmap->size);
+	uint64_t attr = mmap->attr;
+	uint32_t mt = BITS(attr, 5, 3);
+	char str[256];
+
+	snprintf(str, sizeof str,
+		 "[%016lx-%016lx] : [%016lx-%016lx] %5ld%c (%s)"
+		 " %s [%1lx%03lx]\n",
+		 mmap->la, mmap->la + mmap->size - 1,
+		 mmap->pa, mmap->pa + mmap->size - 1,
+		 sz.val, sz.unit,
+		 mmap->shift == 30 ? "1G" : mmap->shift == 21 ? "2M" : "4K",
+		 mt == 0 ? "UC" : mt == 1 ? "WC" : mt == 4 ? "WT" :
+		 mt == 5 ? "WP" : mt == 6 ? "WB" : "--",
+		 BITS(attr, 63, 60),
+		 BITS(attr, 11, 0));
+
+	shell_puts(str);
+
+	/* reset range */
+	mmap->size = 0;
+}
+
+static void dump_vm_ept(struct acrn_vm *vm, char *buf, size_t bufsize)
+{
+	uint64_t *pml4 = (uint64_t*)get_ept_entry(vm);
+	l4_pgtable_info_t info = scan_ept_pgtable(pml4, dump_ept_mmap1);
+
+	dump_l4_pgtable_info(&info, pml4, buf, bufsize);
+}
+
+int32_t shell_dump_ept(int32_t argc, char **argv)
+{
+	if (argc == 2) {
+		uint16_t vmid = (uint16_t)strtol_deci(argv[1]);
+
+		if (vmid < CONFIG_MAX_VM_NUM) {
+			struct acrn_vm *vm = get_vm_from_vmid(vmid);
+			if (!is_poweroff_vm(vm)) {
+				dump_vm_ept(vm, shell_log_buf, SHELL_LOG_BUF_SIZE);
+				shell_puts(shell_log_buf);
+				return 0;
+			}
+		}
+	}
+
+	return -EINVAL;
+}
