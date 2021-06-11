@@ -20,6 +20,11 @@
 extern char shell_log_buf[];
 extern void shell_puts(const char *);
 
+#define BIT(n) (1UL << (n))
+#define BITS(val, p1, p2)   	                                            \
+	(((p1) < (p2)) ? (((val) >> (p1)) & (BIT((p2) - (p1) + 1) - 1))	    \
+	 : (((val) >> (p2)) & (BIT((p1) - (p2) + 1) - 1)))
+
 typedef struct buffer {
 	char *buf;
 	size_t size;
@@ -89,18 +94,16 @@ static void smpcall_dump_pcpu_lapic_info(void *data)
 	dump_lapic_info(buf->buf, buf->size);
 }
 
-static int32_t dump_pcpu_lapic_info(uint16_t pcpu_id)
+static void dump_pcpu_lapic_info(uint16_t pcpu_id, char *buf, size_t bufsize)
 {
 	if (pcpu_id == get_pcpu_id()) {
-		dump_lapic_info(shell_log_buf, SHELL_LOG_BUF_SIZE);
+		dump_lapic_info(buf, bufsize);
 	} else {
 		uint64_t mask = 0UL;
-		buffer_t buf = { .buf = shell_log_buf, .size = SHELL_LOG_BUF_SIZE };
+		buffer_t buff = { .buf = buf, .size = bufsize };
 		bitmap_set_nolock(pcpu_id, &mask);
-		smp_call_function(mask, smpcall_dump_pcpu_lapic_info, &buf);
+		smp_call_function(mask, smpcall_dump_pcpu_lapic_info, &buff);
 	}
-
-	return 0;
 }
 
 int32_t shell_lapic_info(int32_t argc, char **argv)
@@ -121,14 +124,17 @@ int32_t shell_lapic_info(int32_t argc, char **argv)
 		return -EINVAL;
 	}
 
-	return dump_pcpu_lapic_info(pcpu_id);
+	dump_pcpu_lapic_info(pcpu_id, shell_log_buf, SHELL_LOG_BUF_SIZE);
+
+	shell_puts(shell_log_buf);
+	return 0;
 }
 
 /*
  * "vlapic" command
  */
 
-static int32_t dump_vlapic_info(struct acrn_vcpu *vcpu, char *buf, size_t bufsize)
+static void dump_vlapic_info(struct acrn_vcpu *vcpu, char *buf, size_t bufsize)
 {
 	const struct acrn_vlapic *vlapic = vcpu_vlapic(vcpu);
 	const struct lapic_regs *regs = &(vlapic->apic_page);
@@ -162,8 +168,6 @@ static int32_t dump_vlapic_info(struct acrn_vcpu *vcpu, char *buf, size_t bufsiz
 		 regs->lvt[0].v, regs->lvt[1].v, regs->lvt[2].v,
 		 regs->lvt[3].v, regs->lvt[4].v, regs->lvt[5].v,
 		 regs->icr_timer.v, regs->ccr_timer.v, regs->dcr_timer.v);
-
-	return 0;
 }
 
 int32_t shell_vlapic_info(int32_t argc, char **argv)
@@ -191,6 +195,7 @@ int32_t shell_vlapic_info(int32_t argc, char **argv)
 			foreach_vcpu(idx, vm, vcpu) {
 				if (vcpu->vcpu_id == vcpuid) {
 					dump_vlapic_info(vcpu, shell_log_buf, SHELL_LOG_BUF_SIZE);
+					shell_puts(shell_log_buf);
 				}
 			}
 		}
@@ -198,3 +203,425 @@ int32_t shell_vlapic_info(int32_t argc, char **argv)
 
 	return 0;
 }
+
+/*
+ * "memory-map" command
+ */
+
+#define PGTABLE_BASE_HPA(v) (hpa2hva(BITS((v), 51, 12) << 12))
+#define PGTABLE_BASE_GPA(v) (gpa2hva(vm, BITS((v), 51, 12) << 12))
+
+/* Human readable size */
+typedef struct hr_size {
+	uint64_t val;
+	char unit;			     /* G/M/K */
+} hr_size_t;
+
+hr_size_t hr_size(uint64_t size)
+{
+	if ((size & (0x40000000UL - 1)) == 0)
+		return (hr_size_t){ . val = size >> 30, .unit = 'G' };
+
+	if ((size & (0x100000UL - 1)) == 0)
+		return (hr_size_t){ . val = size >> 20, .unit = 'M' };
+
+	return (hr_size_t){ . val = size >> 10, .unit = 'K' };
+}
+
+typedef struct mmap {
+	int shift;
+	uint64_t la;
+	uint64_t pa;
+	uint64_t size;
+	uint64_t attr;
+} mmap_t;
+
+typedef void (*mmap_fn_t)(mmap_t *);
+
+typedef union pml4e {
+	uint64_t v;
+	struct {
+		uint64_t p : 1;		     /* 0 (Present) */
+		uint64_t rw : 1;	     /* 1 (R/W) */
+		uint64_t us : 1;	     /* 2 (U/S) */
+		uint64_t pwt : 1;	     /* 3 page-level write-through */
+		uint64_t pcd : 1;	     /* 4 page-level cache disable */
+		uint64_t a : 1;		     /* 5 accessed */
+		uint64_t ignored : 1;	     /* 6 ignored */
+		uint64_t reserved : 1;	     /* 7 must be 0*/
+		uint64_t ignored2 : 4;	     /* 11:8 ignored */
+		uint64_t ppa : 40;	     /* 51:12 physical address*/
+		uint64_t ignored3 : 11;	     /* 62:52 ignored */
+		uint64_t xd : 1;	     /* 63 XD */
+	} s;
+} pml4e_t;
+
+typedef union pdpte {
+	uint64_t v;
+	struct {
+		uint64_t p : 1;		     /* 0 (Present) */
+		uint64_t rw : 1;	     /* 1 (R/W) */
+		uint64_t us : 1;	     /* 2 (U/S) */
+		uint64_t pwt : 1;	     /* 3 page-level write-through */
+		uint64_t pcd : 1;	     /* 4 page-level cache disable */
+		uint64_t a : 1;		     /* 5 accessed */
+		uint64_t d : 1;		     /* 6 dirty */
+		uint64_t ps : 1;	     /* 7 page size, must be 0*/
+		uint64_t ignored : 4;	     /* 11:8 ignored */
+		uint64_t ppa : 40;	     /* 51:12 physical address */
+		uint64_t ignored2 : 10;	     /* 62:53 ignored */
+		uint64_t xd : 1;	     /* 63 XD */
+	} p;
+	struct {
+		uint64_t p : 1;		     /* 0 (Present) */
+		uint64_t rw : 1;	     /* 1 (R/W) */
+		uint64_t us : 1;	     /* 2 (U/S) */
+		uint64_t pwt : 1;	     /* 3 page-level write-through */
+		uint64_t pcd : 1;	     /* 4 page-level cache disable */
+		uint64_t a : 1;		     /* 5 accessed */
+		uint64_t d : 1;		     /* 6 dirty */
+		uint64_t ps : 1;	     /* 7 page size, must be 1 */
+		uint64_t g : 1;		     /* 8 global*/
+		uint64_t ignored : 3;	     /* 11:9 */
+		uint64_t pat : 1;	     /* 12 PAT */
+		uint64_t reserved : 17;	     /* 29:13 must be 0 */
+		uint64_t pa_1g : 12;	     /* 51:30 1G physical address*/
+		uint64_t ignored2 : 7;	     /* 58:52 ignored */
+		uint64_t prot : 4;	     /* 62:59 protection key */
+		uint64_t xd : 1;	     /* 63 XD */
+	} m;
+} pdpte_t;
+
+typedef union pdte {
+	uint64_t v;
+	struct {
+		uint64_t p : 1;		     /* 0 (Present) */
+		uint64_t rw : 1;	     /* 1 (R/W) */
+		uint64_t us : 1;	     /* 2 (U/S) */
+		uint64_t pwt : 1;	     /* 3 page-level write-through */
+		uint64_t pcd : 1;	     /* 4 page-level cache disable */
+		uint64_t a : 1;		     /* 5 accessed */
+		uint64_t d : 1;		     /* 6 dirty */
+		uint64_t ps : 1;	     /* 7 page size must be 0*/
+		uint64_t ignored : 4;	     /* 11:8 ignored */
+		uint64_t ppa : 40;	     /* 51:12 physical address */
+		uint64_t ignored2 : 10;	     /* 62:53 ignored */
+		uint64_t xd : 1;	     /* 63 XD */
+	} p;
+	struct {
+		uint64_t p : 1;		     /* 0 (Present) */
+		uint64_t rw : 1;	     /* 1 (R/W) */
+		uint64_t us : 1;	     /* 2 (U/S) */
+		uint64_t pwt : 1;	     /* 3 page-level write-through */
+		uint64_t pcd : 1;	     /* 4 page-level cache disable */
+		uint64_t a : 1;		     /* 5 accessed */
+		uint64_t d : 1;		     /* 6 dirty */
+		uint64_t ps : 1;	     /* 7 page size must be 1 */
+		uint64_t g : 1;		     /* 8 global*/
+		uint64_t ignored : 3;	     /* 11:9 */
+		uint64_t pat : 1;	     /* 12 PAT */
+		uint64_t reserved : 8;	     /* 20:13 must be 0 */
+		uint64_t pa_2m : 12;	     /* 51:21 2M physical address*/
+		uint64_t ignored2 : 7;	     /* 58:52 ignored */
+		uint64_t prot : 4;	     /* 62:59 protection key */
+		uint64_t xd : 1;	     /* 63 XD */
+	} m;
+} pdte_t;
+
+typedef union pte {
+	uint64_t v;
+	struct {
+		uint64_t p : 1;		     /* 0 (Present) */
+		uint64_t rw : 1;	     /* 1 (R/W) */
+		uint64_t us : 1;	     /* 2 (U/S) */
+		uint64_t pwt : 1;	     /* 3 page-level write-through */
+		uint64_t pcd : 1;	     /* 4 page-level cache disable */
+		uint64_t a : 1;		     /* 5 accessed */
+		uint64_t d : 1;		     /* 6 dirty */
+		uint64_t pat : 1;	     /* 7 PAT */
+		uint64_t g : 1;		     /* 8 global*/
+		uint64_t ignored : 3;	     /* 11:9 */
+		uint64_t pa_4k : 40;	     /* 51:12 4K physical address*/
+		uint64_t ignored2 : 7;	     /* 58:52 ignored */
+		uint64_t prot : 4;	     /* 62:59 protection key */
+		uint64_t xd : 1;	     /* 63 XD */
+	} s;
+} pte_t;
+
+_Static_assert(sizeof(pml4e_t) == sizeof(uint64_t), "");
+_Static_assert(sizeof(pdpte_t) == sizeof(uint64_t), "");
+_Static_assert(sizeof(pdte_t) == sizeof(uint64_t), "");
+_Static_assert(sizeof(pte_t) == sizeof(uint64_t), "");
+
+static bool is_valid_pml4e(pml4e_t *pml4e)
+{
+	return pml4e->s.p && pml4e->s.reserved == 0;
+}
+
+static bool is_valid_pdpte(pdpte_t *pdpte)
+{
+	return (pdpte->p.p
+		&& ((pdpte->p.ps == 0)
+		    || (pdpte->m.reserved == 0)));
+}
+
+static bool is_valid_pdte(pdte_t *pdte)
+{
+	return (pdte->p.p
+		&& ((pdte->p.ps == 0)
+		    || (pdte->m.reserved == 0)));
+}
+
+static bool is_valid_pte(pte_t *pte)
+{
+	return (pte->s.p != 0);
+}
+
+/* SDM 4.5
+   A logical processor uses 4-level paging if CR0.PG = 1, CR4.PAE = 1,
+   IA32_EFER.LME = 1, and CR4.LA57 = 0.
+*/
+static void walk_l4_pgtable(pml4e_t *pml4e,
+			    void (*fn)(void *data, int shift, uint64_t entry, uint64_t base),
+			    void *fn_data)
+{
+	for (uint64_t i = 0; i < 512; i++, pml4e++) {
+		if (!is_valid_pml4e(pml4e))
+			continue;
+
+		(*fn)(fn_data, 39, pml4e->v, i << 39);
+
+		/* descendent to PDPT */
+		pdpte_t *pdpte = PGTABLE_BASE_HPA(pml4e->v);
+		for (uint64_t j = 0; j < 512; j++, pdpte++) {
+			if (!is_valid_pdpte(pdpte))
+				continue;
+
+			(*fn)(fn_data, 30, pdpte->v, i << 39 | j << 30);
+
+			if (pdpte->p.ps)
+				continue;
+
+			/* descendent to PDT */
+			pdte_t *pdte = PGTABLE_BASE_HPA(pdpte->v);
+			for (uint64_t k = 0; k < 512; k++, pdte++) {
+				if (!is_valid_pdte(pdte))
+					continue;
+
+				(*fn)(fn_data, 21, pdte->v,
+				      i << 39 | j << 30 | k << 21);
+
+				if (pdte->p.ps)
+					continue;
+
+				/* descendent to PT */
+				pte_t *pte = PGTABLE_BASE_HPA(pdte->v);
+				for (uint64_t m = 0; m < 512; m++, pte++) {
+					if (is_valid_pte(pte))
+						(*fn)(fn_data, 12, pte->v,
+						      i << 39 | j << 30
+						      | k << 21 | m << 12);
+				}
+			}
+		}
+	}
+}
+
+/*
+ * data structure and routines for page table information collection
+ */
+
+typedef struct l4_pgtable_walk_data {
+	uint64_t cr3;
+	size_t pml4e_p;
+	size_t pdpte_ps, pdpte_p;
+	size_t pdte_ps, pdte_p;
+	size_t pte_p;
+
+	mmap_t last;
+
+	mmap_fn_t mmap_fn;
+} l4_pgtable_walk_data_t;
+
+typedef struct l4_pgtable_info {
+	uint64_t root;
+	size_t pml4_pages;
+	size_t pdpt_pages;
+	size_t pdt_pages;
+	size_t pt_pages;
+	size_t mem_1g_pages;
+	size_t mem_2m_pages;
+	size_t mem_4k_pages;
+} l4_pgtable_info_t;
+
+
+l4_pgtable_info_t l4_pgtable_info_from_data(const l4_pgtable_walk_data_t *data)
+{
+	l4_pgtable_info_t ret;
+
+	ret.root = data->cr3 & ~(BIT(12) - 1);
+	ret.pml4_pages = 1;
+	ret.pdpt_pages = data->pml4e_p;
+	ret.pdt_pages = data->pdpte_p - data->pdpte_ps;
+	ret.pt_pages = data->pdte_p - data->pdte_ps;
+	ret.mem_1g_pages = data->pdpte_ps;
+	ret.mem_2m_pages = data->pdte_ps;
+	ret.mem_4k_pages = data->pte_p;
+
+	return ret;
+}
+
+static void dump_mmap1(mmap_t *mmap)
+{
+	ASSERT(mmap->size != 0);
+
+	hr_size_t sz = hr_size(mmap->size);
+
+	/* pte could be pte.s, pdte.m or pdpte.m */
+	pte_t *pte = (void *)&mmap->attr;
+
+	char str[256];
+
+	snprintf(str, sizeof str,
+		 "[%016lx-%016lx] : [%016lx-%016lx] %5ld%c (%s)"
+		 " %c%c%c%c%c%c%c%c%c\n",
+		 mmap->la, mmap->la + mmap->size - 1,
+		 mmap->pa, mmap->pa + mmap->size - 1,
+		 sz.val, sz.unit,
+		 (mmap->shift == 30 ? "1G" :
+		  mmap->shift == 21 ? "2M" : "4K"),
+		 pte->s.xd ? '-' : 'X',
+		 pte->s.g ? 'G' : '-',
+		 pte->s.pat ? 'P' : '-',
+		 pte->s.d ? 'D' : '-',
+		 pte->s.a ? 'A' : '-',
+		 pte->s.pcd ? '-' : 'C',
+		 pte->s.pwt ? 'T' : 'B',
+		 pte->s.us ? 'U' : 'S',
+		 pte->s.us ? 'R' : 'W'
+		);
+	shell_puts(str);
+
+	/* reset range */
+	mmap->size = 0;
+}
+
+static void update_mmap(int shift, mmap_t *last, uint64_t la, uint64_t pa, uint64_t attr,
+			mmap_fn_t fn)
+{
+	if ((last->shift == shift)
+	    && (last->la + last->size == la)
+	    && (last->pa + last->size == pa)
+	    && (last->attr == attr)) {
+		/* tack together */
+		last->size += 1UL << shift;
+	} else {
+		if (last->size != 0 && fn) {
+			fn(last);
+		}
+		last->shift = shift;
+		last->la = la;
+		last->pa = pa;
+		last->attr = attr;
+		last->size = 1UL << shift;
+	}
+}
+
+static void l4_pgtable_walk_fn(void *cb_data, int shift, uint64_t ent, uint64_t la)
+{
+	l4_pgtable_walk_data_t *data = cb_data;
+
+	if (shift == 39) {
+		data->pml4e_p++;
+	} else if (shift == 30) {
+		data->pdpte_p++;
+
+		if ((ent & BIT(7)) == 0)
+			return;
+
+		data->pdpte_ps++;
+
+		uint64_t pa = ent & ((BIT(52) - 1) >> 30 << 30);
+		uint64_t attr = ent & ~((BIT(52) - 1) >> 30 << 30);
+		mmap_t *last = &data->last;
+
+		update_mmap(shift, last, la, pa, attr, data->mmap_fn);
+
+	} else if (shift == 21) {
+		data->pdte_p++;
+
+		if ((ent & BIT(7)) == 0)
+			return;
+
+		data->pdte_ps++;
+
+		uint64_t pa = ent & ((BIT(52) - 1) >> 21 << 21);
+		uint64_t attr = ent & ~((BIT(52) - 1) >> 21 << 21);
+		mmap_t *last = &data->last;
+
+		update_mmap(shift, last, la, pa, attr, data->mmap_fn);
+	} else if (shift == 12) {
+		data->pte_p++;
+
+		uint64_t pa = ent & ((BIT(52) - 1) >> 12 << 12);
+		uint64_t attr = ent & ~((BIT(52) - 1) >> 12 << 12);
+		mmap_t *last = &data->last;
+
+		update_mmap(shift, last, la, pa, attr, data->mmap_fn);
+	} else
+		ASSERT(0);
+}
+
+static l4_pgtable_info_t scan_l4_pgtable(pml4e_t *base, mmap_fn_t fn)
+{
+	l4_pgtable_walk_data_t data = {
+		.mmap_fn = fn
+	};
+
+	walk_l4_pgtable(base, l4_pgtable_walk_fn, &data);
+	if (data.last.size && fn)
+		fn(&data.last);
+
+	return l4_pgtable_info_from_data(&data);
+}
+
+static void dump_hv_memory_map(char *buf, size_t bufsize)
+{
+	uint64_t cr3;
+	pml4e_t *base;
+	l4_pgtable_info_t info;
+	
+ 	CPU_CR_READ(cr3, &cr3);
+	base = PGTABLE_BASE_HPA(cr3);
+
+	info = scan_l4_pgtable(base, dump_mmap1);
+	snprintf(buf, bufsize,
+		 "%16s : 0x%016lx\n"
+		 "%16s : %d\n"
+		 "%16s : %d\n"
+		 "%16s : %d\n"
+		 "%16s : %d\n"
+		 "%16s : %d\n"
+		 "%16s : %d\n"
+		 "%16s : %d\n",
+		 "Root pointer", (uint64_t)base,
+		 "PML4 pages", info.pml4_pages,
+		 "PDPT pages", info.pdpt_pages,
+		 "PDT pages", info.pdt_pages,
+		 "PT pages", info.pt_pages,
+		 "1G pages", info.mem_1g_pages,
+		 "2M pages", info.mem_2m_pages,
+		 "4K pages", info.mem_4k_pages);
+}
+
+int32_t shell_memory_map(int32_t argc, __unused char **argv)
+{
+	if (argc != 1) {
+		return -EINVAL;
+	} else {
+		dump_hv_memory_map(shell_log_buf, SHELL_LOG_BUF_SIZE);
+		shell_puts(shell_log_buf);
+		return 0;
+	}
+}
+

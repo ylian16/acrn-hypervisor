@@ -115,4 +115,8 @@ struct shell {
 #define SHELL_CMD_VLAPIC_PARAM		"<vm_id> <vcpu_id>"
 #define SHELL_CMD_VLAPIC_HELP		"Show virtual LAPIC information"
 
+#define SHELL_CMD_MEMMAP		"memory-map"
+#define SHELL_CMD_MEMMAP_PARAM		NULL
+#define SHELL_CMD_MEMMAP_HELP		"Dump memory map and paging information of hypervisor"
+
 #endif /* SHELL_PRIV_H */
