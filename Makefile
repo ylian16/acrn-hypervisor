@@ -167,6 +167,9 @@ apl-up2-hybrid-install-debug:
 sbl-hypervisor-install-debug: kbl-nuc-i7-industry-install-debug \
 			      apl-up2-hybrid-install-debug
 
+icx-rvp-industry:
+	$(call build_acrn,icx-rvp,industry)
+
 devicemodel-install:
 	$(MAKE) -C $(T)/devicemodel DM_OBJDIR=$(DM_OUT) install
 
