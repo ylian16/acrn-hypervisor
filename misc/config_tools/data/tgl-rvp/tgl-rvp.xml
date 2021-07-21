@@ -464,7 +464,7 @@
 	0, 1, 2, 3
 	</CPU_PROCESSOR_INFO>
   <MAX_MSIX_TABLE_NUM>
-	16
+	512
 	</MAX_MSIX_TABLE_NUM>
   <processors>
     <model description="11th Gen Intel(R) Core(TM) i7-1185GRE @ 2.80GHz">

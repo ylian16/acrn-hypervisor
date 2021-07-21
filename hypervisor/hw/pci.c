@@ -629,7 +629,7 @@ static void init_all_dev_config(void)
 			if ((total + cnt) > CONFIG_MAX_PCI_DEV_NUM) {
 				pr_err("%s, %x:%x.%x is dropped since no room for %u VFs",
 						__func__, pdev->bdf.bits.b, pdev->bdf.bits.d, pdev->bdf.bits.f, cnt);
-				continue;
+				//continue;
 			} else {
 				total += cnt;
 			}
@@ -806,6 +806,10 @@ static void pci_enumerate_cap(struct pci_pdev *pdev)
 			pdev->msix.table_count = (msgctrl & PCIM_MSIXCTRL_TABLE_SIZE) + 1U;
 
 			ASSERT(pdev->msix.table_count <= CONFIG_MAX_MSIX_TABLE_NUM);
+			if (pdev->msix.table_count > CONFIG_MAX_MSIX_TABLE_NUM) {
+				pr_err("%s %x MSIX %d - %d\n", __func__, pdev->bdf.value, pdev->msix.table_count, CONFIG_MAX_MSIX_TABLE_NUM);
+			}
+
 
 			/* Copy MSIX capability struct into buffer */
 			for (idx = 0U; idx < len; idx++) {

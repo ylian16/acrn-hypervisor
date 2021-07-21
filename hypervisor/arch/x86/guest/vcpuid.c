@@ -119,6 +119,7 @@ static void init_vcpuid_entry(uint32_t leaf, uint32_t subleaf,
 
 			cpuid_subleaf(leaf, subleaf, &entry->eax, &entry->ebx, &entry->ecx, &entry->edx);
 
+			entry->ecx &= ~(1U << 16U);	// hide 5-level paging
 			entry->ebx &= ~(CPUID_EBX_PQM | CPUID_EBX_PQE);
 
 			/* mask SGX and SGX_LC */

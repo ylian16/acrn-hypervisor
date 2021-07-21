@@ -448,10 +448,6 @@ int32_t detect_hardware_support(void)
 		(boot_cpu_data.virt_bits == 0U)) {
 		printf("%s, can't detect Linear/Physical Address size\n", __func__);
 		ret = -ENODEV;
-	} else if (boot_cpu_data.phys_bits > MAXIMUM_PA_WIDTH) {
-		printf("%s, physical-address width (%d) over maximum physical-address width (%d)\n",
-			__func__, boot_cpu_data.phys_bits, MAXIMUM_PA_WIDTH);
-		ret = -ENODEV;
 	} else if ((boot_cpu_data.phys_bits > 39U) && (!pcpu_has_cap(X86_FEATURE_PAGE1GB) ||
 			!pcpu_has_vmx_ept_vpid_cap(VMX_EPT_1GB_PAGE))) {
 		printf("%s, physical-address width %d over 39 bits must support 1GB large page\n",

@@ -190,17 +190,8 @@ static void show_host_call_trace(uint64_t rsp, uint64_t rbp_arg, uint16_t pcpu_i
 
 void asm_assert(int32_t line, const char *file, const char *txt)
 {
-	uint16_t pcpu_id = get_pcpu_id();
-	uint64_t rsp = cpu_rsp_get();
-	uint64_t rbp = cpu_rbp_get();
-
 	pr_acrnlog("Assertion failed in file %s,line %d : %s",
 			file, line, txt);
-	show_host_call_trace(rsp, rbp, pcpu_id);
-	dump_guest_context(pcpu_id);
-	do {
-		asm_pause();
-	} while (1);
 }
 
 void dump_intr_excp_frame(const struct intr_excp_ctx *ctx)
